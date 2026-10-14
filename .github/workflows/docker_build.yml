@@ -9,6 +9,15 @@ on:
     - cron: '0 2 * * 0'
   workflow_dispatch:
 
+# ghcr.io publish uses GITHUB_TOKEN, which requires packages:write.
+# There is intentionally no `github.repository == 'termux/termux-docker'`
+# guard (as upstream had for the Docker Hub token): this fork targets
+# ghcr.io under ${{ github.repository_owner }}, so a fork-of-a-fork would
+# publish under its own owner, not ours.
+permissions:
+  contents: read
+  packages: write
+
 env:
   CI: true
   DOCKER_BUILDKIT: 1
