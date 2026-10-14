@@ -49,7 +49,24 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: involvex/termux-app
+        # The seed tree (docker/invapp/) lives in termux-app, not here. Until the
+        # termux-app PR that adds it is merged, master has no docker/invapp/, so
+        # the ref is overridable via the TERMUX_APP_REF repository variable.
+        ref: ${{ vars.TERMUX_APP_REF || 'master' }}
         path: termux-app-src
+
+    - name: Check the seed tree
+      if: env.INVAPP == 'true'
+      run: |
+        set -eu
+        seed="termux-app-src/docker/invapp/seed.sh"
+        if [ ! -f "$seed" ]; then
+          echo "::error::involvex/termux-app@${{ vars.TERMUX_APP_REF || 'master' }} has no docker/invapp/seed.sh" >&2
+          echo "  merge the termux-app PR that adds docker/invapp/ first, or set the" >&2
+          echo "  TERMUX_APP_REF repository variable to a branch that contains it" >&2
+          exit 1
+        fi
+        echo "seed tree: $(cd termux-app-src/docker/invapp && pwd) ($(find termux-app-src/docker/invapp -type f | wc -l) files)"
 
     - name: Build image
       run: |
