@@ -4,6 +4,100 @@ A [Termux](https://termux.dev) environment packaged into Docker image.
 Environment doesn't have Android runtime components, so certain things will
 not be available (DalvikVM, OpenSLES, etc...).
 
+> **This is the `involvex` fork.** By default it builds **InVxTermux**: a
+> termux-docker image with the same tooling as the
+> [InVxTermux Android app](https://github.com/involvex/termux-app) — bun,
+> OpenCode, Cursor Agent, `td-*` helpers, configs and widget shortcut templates.
+> The tooling source of truth lives in that repo (`docker/invapp/`).
+> Pass no `--invapp` to build a stock termux-docker image instead.
+
+## InVxTermux image
+
+### Build
+
+```.sh
+# from a checkout of this repo, next to a checkout of termux-app
+INVAPP_SRC=../termux-app/docker/invapp ./generate.sh --invapp
+
+# or, when termux-app is the current directory's sibling:
+./generate.sh --invapp
+```
+
+Useful build knobs (all optional):
+
+```.sh
+TERMUX_DOCKER__IMAGE_NAME=ghcr.io/involvex/termux-docker \
+TERMUX_DOCKER__BOOTSTRAP_VERSION='2026.02.12-r1%2Bapt.android-7' \
+TERMUX_DOCKER__INVAPP_BUN_VERSION=1.4.2 \
+TERMUX_DOCKER__INVAPP_BUN_BASELINE=0 \
+TERMUX_DOCKER__INVAPP_WITH_AI=0 \
+./generate.sh --invapp
+```
+
+`TERMUX_DOCKER__INVAPP_WITH_AI=1` also bakes OpenCode and Cursor Agent into
+the image. They are large, so by default the image only ships their installers
+and `td-ai` / `agent` fetch them on first use.
+
+### Run
+
+```.sh
+docker run -it ghcr.io/involvex/termux-docker:aarch64
+docker run -it --rm -p 5173:5173 ghcr.io/involvex/termux-docker:x86_64
+```
+
+Tags: `aarch64`, `arm`, `x86_64`, `i686`, `latest` (multiplatform manifest).
+Cross-architecture runs need QEMU — see *Running ARM containers* below.
+
+### What you get
+
+| Feature | In the image |
+|---|---|
+| `bun`, `bunx` | yes on `aarch64`/`x86_64` (bun publishes no armv7/386 build — same limit as the APK); `nodejs-lts` everywhere |
+| `td-dev`, `td-scaffold`, `td-clone` | yes (need bun for the first two) |
+| `td-ai` + `opencode-setup`, `cursor-agent-setup`, `td-upgrade`, `td-info` | yes |
+| `~/.termux/termux.properties`, hacker `colors.properties`, bash completions | yes |
+| `~/.shortcuts` templates | seeded (run them by hand; no widget launcher) |
+| `termux-api` CLIs | installed, but every call broadcasts an Android intent, so they fail — same as a device without the plugin APK |
+| `termux-screenshot`, `td-screen-ocr` | explicit stubs explaining the Android-only requirement |
+| `td-jdk-setup` / JDK | `pkg install openjdk-17`, or `td-install-extras openjdk-17` — plain `java` works in a container |
+| `td-resource-linux` (proot) | intentionally absent: the container already is a Linux rootfs |
+
+Verify with `td-info` right after the first `docker run`.
+
+### bun is the APK's android build
+
+The container installs the same `bun-linux-{x64,aarch64}-android.zip` bytes the
+APK bundles, pinned to the checksums in `app/build.gradle`, so both sides run a
+byte-identical bun. The plain Linux build cannot run here: its ELF interpreter
+is `/lib64/ld-linux-x86-64.so.2`, and this rootfs is bionic (`/system` is a
+symlink to `$PREFIX/opt/aosp`, whose `/system/bin/linker64` *is* present).
+
+### Changes against upstream
+
+Kept minimal so rebasing on `termux/termux-docker` stays easy:
+
+| Change | Why |
+|---|---|
+| `--invapp` flag + `INVAPP_SRC` staging | layers the InVxTermux tooling; absent → byte-for-byte stock build |
+| `TERMUX_DOCKER__IMAGE_NAME` / `TERMUX_DOCKER__BOOTSTRAP_VERSION` are overridable (`:=` instead of `=`) | lets CI and local builds retag without editing the script |
+| `SYMLINKS.txt` loop skips entries that already exist | newer bootstraps ship some listed paths already in the archive; plain `ln -s` fails with `EEXIST` and, under `set -e`, kills rootfs generation |
+| Seed staging strips `\r` | this fork is developed on Windows; CRLF shebangs would fail with `bad interpreter` inside the image |
+| `generate.sh publish` parsed as a flag instead of `$1` | survives `--invapp publish` |
+| CI publishes to `ghcr.io/involvex/termux-docker` and smoke-tests `td-info` | upstream pushes to `termux/termux-docker` on Docker Hub, which a fork must not do |
+
+### Bun and Docker's seccomp profile
+
+Bun uses `openat2`/`fchmodat2`. Some Docker versions' default seccomp profile
+rejects them, which surfaces as `Bad system call` or an unknown syscall. If you
+hit that:
+
+```.sh
+docker run -it --rm --security-opt seccomp=unconfined ghcr.io/involvex/termux-docker:aarch64
+```
+
+The container image itself is unchanged by this — it only relaxes the host
+policy. `bun-doctor` prints this hint too.
+
 ## How to use
 
 ### Requirements

@@ -12,6 +12,10 @@ on:
 env:
   CI: true
   DOCKER_BUILDKIT: 1
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/termux-docker
+  # Layer the InVxTermux tooling (bun, td-* helpers, configs) on top of the
+  # stock termux-docker rootfs. Set to false to publish a plain termux-docker.
+  INVAPP: 'true'
 
 jobs:
   generate:
@@ -20,110 +24,103 @@ jobs:
         include:
           - runner: ubuntu-24.04
             architecture: i686
-            package-manager: apt
           - runner: ubuntu-24.04
             architecture: x86_64
-            package-manager: apt
           - runner: ubuntu-24.04-arm
             architecture: arm
-            package-manager: apt
           - runner: ubuntu-24.04-arm
             architecture: aarch64
-            package-manager: apt
-          - runner: ubuntu-24.04
-            architecture: i686
-            package-manager: pacman
-          - runner: ubuntu-24.04
-            architecture: x86_64
-            package-manager: pacman
-          - runner: ubuntu-24.04-arm
-            architecture: arm
-            package-manager: pacman
-          - runner: ubuntu-24.04-arm
-            architecture: aarch64
-            package-manager: pacman
     runs-on: ${{ matrix.runner }}
     steps:
 
     - name: Set variables
       run: |
         echo "TERMUX_ARCH=${{ matrix.architecture }}" >> $GITHUB_ENV
-        echo "TERMUX_PACKAGE_MANAGER=${{ matrix.package-manager }}" >> $GITHUB_ENV
-        if [ ${{ matrix.package-manager }} = apt ]; then
-          echo "TERMUX_DOCKER__IMAGE_NAME=termux/termux-docker" >> $GITHUB_ENV
-        elif [ ${{ matrix.package-manager }} = pacman ]; then
-          echo "TERMUX_DOCKER__IMAGE_NAME=termux/termux-docker-pacman" >> $GITHUB_ENV
-        fi
+        echo "TERMUX_PACKAGE_MANAGER=apt" >> $GITHUB_ENV
+        echo "TERMUX_DOCKER__IMAGE_NAME=${{ env.IMAGE_NAME }}" >> $GITHUB_ENV
+        # Keep the container's bootstrap on the same variant the APK ships.
+        echo "TERMUX_DOCKER__BOOTSTRAP_VERSION=2026.02.12-r1%2Bapt.android-7" >> $GITHUB_ENV
 
-    - name: Clone repository
+    - name: Clone termux-docker
       uses: actions/checkout@v4
 
-    - name: Build image
-      run: ./generate.sh
+    - name: Clone InVxTermux tooling source
+      if: env.INVAPP == 'true'
+      uses: actions/checkout@v4
+      with:
+        repository: involvex/termux-app
+        path: termux-app-src
 
-    - name: Login to Docker Hub
-      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && github.repository == 'termux/termux-docker'
+    - name: Build image
+      run: |
+        set -eu
+        if [ "${{ env.INVAPP }}" = "true" ]; then
+          INVAPP_SRC="$PWD/termux-app-src/docker/invapp" ./generate.sh --invapp
+        else
+          ./generate.sh
+        fi
+
+    - name: Smoke test the seeded tooling
+      if: env.INVAPP == 'true'
+      run: |
+        set -eu
+        echo "::group::td-info"
+        docker run --rm ${{ env.IMAGE_NAME }}:${{ matrix.architecture }} td-info
+        echo "::endgroup::"
+        echo "::group::bun + helpers on PATH"
+        docker run --rm ${{ env.IMAGE_NAME }}:${{ matrix.architecture }} \
+          bash -lc 'command -v td-dev td-scaffold td-clone td-ai bun || true; bun --version || true'
+        echo "::endgroup::"
+
+    - name: Login to ghcr.io
+      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
       uses: docker/login-action@v3
       with:
-        username: grimler
-        password: ${{ secrets.GRIMLER_DOCKER_TOKEN }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Push to Docker Hub
-      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && github.repository == 'termux/termux-docker'
-      run: docker push ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:${{ env.TERMUX_ARCH }}
+    - name: Push to ghcr.io
+      if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+      run: docker push ${{ env.IMAGE_NAME }}:${{ matrix.architecture }}
 
     - name: Export container as tar archive
       if: always()
       run: |
         docker run \
-          --name termux-docker-${{ env.TERMUX_PACKAGE_MANAGER }}-${{ env.TERMUX_ARCH }} \
-          ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:${{ env.TERMUX_ARCH }} \
+          --name termux-docker-${{ matrix.architecture }} \
+          ${{ env.IMAGE_NAME }}:${{ matrix.architecture }} \
           uname -a
-        docker stop termux-docker-${{ env.TERMUX_PACKAGE_MANAGER }}-${{ env.TERMUX_ARCH }}
-        docker export -o termux-docker-${{ env.TERMUX_PACKAGE_MANAGER }}-${{ env.TERMUX_ARCH }}.tar \
-          termux-docker-${{ env.TERMUX_PACKAGE_MANAGER }}-${{ env.TERMUX_ARCH }}
-        sha256sum termux-docker-${{ env.TERMUX_PACKAGE_MANAGER }}-${{ env.TERMUX_ARCH }}.tar
+        docker stop termux-docker-${{ matrix.architecture }}
+        docker export -o termux-docker-${{ matrix.architecture }}.tar \
+          termux-docker-${{ matrix.architecture }}
+        sha256sum termux-docker-${{ matrix.architecture }}.tar
 
     - name: Store tar archive
       if: always()
       uses: actions/upload-artifact@v5
       with:
-        name: termux-docker-${{ env.TERMUX_PACKAGE_MANAGER }}-${{ env.TERMUX_ARCH }}-${{ github.sha }}
-        path: termux-docker-${{ env.TERMUX_PACKAGE_MANAGER }}-${{ env.TERMUX_ARCH }}.tar
+        name: termux-docker-${{ matrix.architecture }}-${{ github.sha }}
+        path: termux-docker-${{ matrix.architecture }}.tar
 
   multiplatform:
-    strategy:
-      matrix:
-        include:
-          - package-manager: apt
-          - package-manager: pacman
-    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request' && github.repository == 'termux/termux-docker'
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     needs: generate
     runs-on: ubuntu-24.04
     steps:
 
-    - name: Set variables
-      run: |
-        if [ ${{ matrix.package-manager }} = apt ]; then
-          echo "TERMUX_DOCKER__IMAGE_NAME=termux/termux-docker" >> $GITHUB_ENV
-        elif [ ${{ matrix.package-manager }} = pacman ]; then
-          echo "TERMUX_DOCKER__IMAGE_NAME=termux/termux-docker-pacman" >> $GITHUB_ENV
-        fi
-
-    - name: Login to Docker Hub
+    - name: Login to ghcr.io
       uses: docker/login-action@v3
       with:
-        username: grimler
-        password: ${{ secrets.GRIMLER_DOCKER_TOKEN }}
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Create multiplatform tag
       run: |
-        docker manifest create \
-          ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:latest \
-          ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:i686 \
-          ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:x86_64 \
-          ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:arm \
-          ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:aarch64
-
-    - name: Push multiplatform tag to Docker Hub
-      run: docker manifest push ${{ env.TERMUX_DOCKER__IMAGE_NAME }}:latest
+        docker buildx imagetools create \
+          -t ${{ env.IMAGE_NAME }}:latest \
+          ${{ env.IMAGE_NAME }}:i686 \
+          ${{ env.IMAGE_NAME }}:x86_64 \
+          ${{ env.IMAGE_NAME }}:arm \
+          ${{ env.IMAGE_NAME }}:aarch64
