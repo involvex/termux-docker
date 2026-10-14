@@ -18,7 +18,7 @@ for arg in "$@"; do
 			echo
 			echo "  --podman  build with podman instead of docker"
 			echo "  --invapp  layer the InVxTermux tooling into the image"
-			echo "            (source: \$INVAPP_SRC, default ../termux-app/docker/invapp)"
+			echo "            (source: \$INVAPP_SRC, default ../termux-app/app/src/main/assets/invapp)"
 			echo "  publish   push the built image"
 			exit 0
 			;;
@@ -479,11 +479,11 @@ find -L "${TERMUX_DOCKER__ROOTFS}/system" \
 # permission pass above so the files keep world-readable modes; the Dockerfile's
 # COPY --chown=1000:1000 gives them the right owner.
 if [ "$INVAPP" = 1 ]; then
-	INVAPP_SEED="${INVAPP_SRC:-../termux-app/docker/invapp}"
+	INVAPP_SEED="${INVAPP_SRC:-../termux-app/app/src/main/assets/invapp}"
 	if [ ! -f "$INVAPP_SEED/seed.sh" ]; then
 		echo "[!] --invapp requested but no seed tree at '$INVAPP_SEED'."
-		echo "    Point INVAPP_SRC at termux-app/docker/invapp, e.g.:"
-		echo "      INVAPP_SRC=../termux-app/docker/invapp $0 --invapp"
+		echo "    Point INVAPP_SRC at termux-app/app/src/main/assets/invapp, e.g.:"
+		echo "      INVAPP_SRC=../termux-app/app/src/main/assets/invapp $0 --invapp"
 		exit 1
 	fi
 	echo "[*] Staging InVxTermux tooling from ${INVAPP_SEED}..."

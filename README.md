@@ -8,7 +8,7 @@ not be available (DalvikVM, OpenSLES, etc...).
 > termux-docker image with the same tooling as the
 > [InVxTermux Android app](https://github.com/involvex/termux-app) — bun,
 > OpenCode, Cursor Agent, `td-*` helpers, configs and widget shortcut templates.
-> The tooling source of truth lives in that repo (`docker/invapp/`).
+> The tooling source of truth lives in that repo (`app/src/main/assets/invapp/`).
 > Pass no `--invapp` to build a stock termux-docker image instead.
 
 ## InVxTermux image
@@ -17,7 +17,7 @@ not be available (DalvikVM, OpenSLES, etc...).
 
 ```.sh
 # from a checkout of this repo, next to a checkout of termux-app
-INVAPP_SRC=../termux-app/docker/invapp ./generate.sh --invapp
+INVAPP_SRC=../termux-app/app/src/main/assets/invapp ./generate.sh --invapp
 
 # or, when termux-app is the current directory's sibling:
 ./generate.sh --invapp

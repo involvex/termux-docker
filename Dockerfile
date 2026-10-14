@@ -46,7 +46,7 @@ RUN . $TERMUX__PREFIX/bin/termux-setup-package-manager && \
         pacman -Syyu --noconfirm; \
     fi
 
-# InVxTermux layer. generate.sh --invapp stages termux-app/docker/invapp into
+# InVxTermux layer. generate.sh --invapp stages termux-app/app/src/main/assets/invapp into
 # $TERMUX__PREFIX/tmp/invapp-seed; without it this is a stock termux-docker.
 # Runs as 'system' so package installs and file modes match the rest of $PREFIX.
 # HOME/PREFIX are passed explicitly: this stage only sets PATH, so relying on
