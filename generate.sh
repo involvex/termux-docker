@@ -6,9 +6,29 @@ cd "$(dirname "$(realpath "$0")")"
 
 OCI="docker"
 OCI_ARG="build"
-case "${1-}" in
-	-p|--podman) OCI="podman" ; OCI_ARG+=" --format docker" ;;
-esac
+INVAPP=0
+PUBLISH=0
+for arg in "$@"; do
+	case "$arg" in
+		-p|--podman) OCI="podman" ; OCI_ARG+=" --format docker" ;;
+		--invapp) INVAPP=1 ;;
+		publish) PUBLISH=1 ;;
+		-h|--help)
+			echo "usage: generate.sh [--podman] [--invapp] [publish]"
+			echo
+			echo "  --podman  build with podman instead of docker"
+			echo "  --invapp  layer the InVxTermux tooling into the image"
+			echo "            (source: \$INVAPP_SRC, default ../termux-app/docker/invapp)"
+			echo "  publish   push the built image"
+			exit 0
+			;;
+		*)
+			echo "error: unknown argument '$arg'" >&2
+			echo "usage: generate.sh [--podman] [--invapp] [publish]" >&2
+			exit 2
+			;;
+	esac
+done
 
 if [ -n "${TERMUX_DOCKER_USE_SUDO-}" ]; then
 	SUDO="sudo"
@@ -51,8 +71,8 @@ fi
 : "${TERMUX_PACKAGE_MANAGER:="apt"}"
 case "${TERMUX_PACKAGE_MANAGER}" in
 	apt)
-		TERMUX_DOCKER__IMAGE_NAME="termux/termux-docker"
-		TERMUX_DOCKER__BOOTSTRAP_VERSION="2026.06.07-r1%2Bapt.android-7"
+		: "${TERMUX_DOCKER__IMAGE_NAME:=termux/termux-docker}"
+		: "${TERMUX_DOCKER__BOOTSTRAP_VERSION:=2026.06.07-r1%2Bapt.android-7}"
 		TERMUX_DOCKER__BOOTSTRAP_SRCURL="https://github.com/termux/termux-packages/releases/download/bootstrap-${TERMUX_DOCKER__BOOTSTRAP_VERSION}/bootstrap-${TERMUX_ARCH}.zip"
 		declare -A REPO_BASE_URLS=(
 			["main"]="https://packages-cf.termux.dev/apt/termux-main/dists/stable/main"
@@ -60,8 +80,8 @@ case "${TERMUX_PACKAGE_MANAGER}" in
 		)
 		;;
 	pacman)
-		TERMUX_DOCKER__IMAGE_NAME="termux/termux-docker-pacman"
-		TERMUX_DOCKER__BOOTSTRAP_VERSION="2026.06.07-r1%2Bpacman.android-7"
+		: "${TERMUX_DOCKER__IMAGE_NAME:=termux/termux-docker-pacman}"
+		: "${TERMUX_DOCKER__BOOTSTRAP_VERSION:=2026.06.07-r1%2Bpacman.android-7}"
 		TERMUX_DOCKER__BOOTSTRAP_SRCURL="https://github.com/termux-pacman/termux-packages/releases/download/bootstrap-${TERMUX_DOCKER__BOOTSTRAP_VERSION}/bootstrap-${TERMUX_ARCH}.zip"
 		declare -A REPO_BASE_URLS=(
 			["main"]="https://sync.termux-pacman.dev/main"
@@ -357,6 +377,13 @@ pushd "${TERMUX_DOCKER__ROOTFS}${TERMUX__PREFIX}/"
 cat "${TERMUX_DOCKER__ROOTFS}${TERMUX__PREFIX}/SYMLINKS.txt" | while read -r line; do
 	dest=$(echo "$line" | awk -F '←' '{ print $1 }');
 	link=$(echo "$line" | awk -F '←' '{ print $2 }');
+	# fork fix: newer bootstraps ship some of the paths listed in SYMLINKS.txt
+	# already present in the archive (e.g. ./share/man/man3/WINDOW.3ncurses.gz).
+	# Plain `ln -s` then fails with EEXIST and, under `set -e`, aborts the whole
+	# rootfs generation. Skip what is already there instead of clobbering it.
+	if [ -e "$link" ] || [ -L "$link" ]; then
+		continue
+	fi
 	ln -s "$dest" "$link";
 done
 popd
@@ -447,6 +474,33 @@ find -L "${TERMUX_DOCKER__ROOTFS}/system" \
 	-type f ! $find_executable_arg -exec \
 	chmod 644 "{}" \;
 
+# InVxTermux layer (opt-in): stage the seed tree inside the prefix so the
+# Dockerfile's bootstrap stage can run it as the 'system' user. Staged after the
+# permission pass above so the files keep world-readable modes; the Dockerfile's
+# COPY --chown=1000:1000 gives them the right owner.
+if [ "$INVAPP" = 1 ]; then
+	INVAPP_SEED="${INVAPP_SRC:-../termux-app/docker/invapp}"
+	if [ ! -f "$INVAPP_SEED/seed.sh" ]; then
+		echo "[!] --invapp requested but no seed tree at '$INVAPP_SEED'."
+		echo "    Point INVAPP_SRC at termux-app/docker/invapp, e.g.:"
+		echo "      INVAPP_SRC=../termux-app/docker/invapp $0 --invapp"
+		exit 1
+	fi
+	echo "[*] Staging InVxTermux tooling from ${INVAPP_SEED}..."
+	INVAPP_SEED_DST="${TERMUX_DOCKER__ROOTFS}${TERMUX__PREFIX}/tmp/invapp-seed"
+	rm -rf "$INVAPP_SEED_DST"
+	mkdir -p "$INVAPP_SEED_DST"
+	cp -R "${INVAPP_SEED}/." "$INVAPP_SEED_DST/"
+	# The seed tree ships '#!@BASH@' shebangs and is executed inside the image.
+	# termux-app/.gitattributes pins LF, but this repo is developed on Windows,
+	# so strip CR here as well rather than fail the build with a confusing
+	# "bad interpreter" error.
+	find "$INVAPP_SEED_DST" -type f -exec sed -i 's/\r$//' {} +
+	find "$INVAPP_SEED_DST" -type d -exec chmod 755 "{}" \;
+	find "$INVAPP_SEED_DST" -type f -exec chmod 644 "{}" \;
+	chmod 755 "$INVAPP_SEED_DST/seed.sh"
+fi
+
 echo "[*] Rootfs generation complete. Building termux-docker image..."
 $SUDO $OCI ${OCI_ARG} \
 	--no-cache \
@@ -456,8 +510,11 @@ $SUDO $OCI ${OCI_ARG} \
 	--build-arg TERMUX__PREFIX="${TERMUX__PREFIX}" \
 	--build-arg TERMUX__HOME="${TERMUX__HOME}" \
 	--build-arg TERMUX__CACHE_DIR="${TERMUX__CACHE_DIR}" \
+	--build-arg TERMUX_DOCKER__INVAPP_BUN_VERSION="${TERMUX_DOCKER__INVAPP_BUN_VERSION:-1.4.2}" \
+	--build-arg TERMUX_DOCKER__INVAPP_BUN_BASELINE="${TERMUX_DOCKER__INVAPP_BUN_BASELINE:-0}" \
+	--build-arg TERMUX_DOCKER__INVAPP_WITH_AI="${TERMUX_DOCKER__INVAPP_WITH_AI:-0}" \
 	.
 
-if [ "${1-}" = "publish" ]; then
+if [ "$PUBLISH" = 1 ]; then
 	$SUDO $OCI push "${TERMUX_DOCKER__IMAGE_NAME}:${TERMUX_ARCH}"
 fi

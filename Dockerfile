@@ -44,8 +44,32 @@ RUN . $TERMUX__PREFIX/bin/termux-setup-package-manager && \
         pacman-key --init && \
         pacman-key --populate && \
         pacman -Syyu --noconfirm; \
-    fi && \
-    rm -rf "${TERMUX__PREFIX}"/var/lib/apt/* \
+    fi
+
+# InVxTermux layer. generate.sh --invapp stages termux-app/docker/invapp into
+# $TERMUX__PREFIX/tmp/invapp-seed; without it this is a stock termux-docker.
+# Runs as 'system' so package installs and file modes match the rest of $PREFIX.
+# HOME/PREFIX are passed explicitly: this stage only sets PATH, so relying on
+# the shell's passwd lookup would risk seeding into "/".
+ARG TERMUX__HOME
+ARG TERMUX_DOCKER__INVAPP_BUN_VERSION=1.4.2
+ARG TERMUX_DOCKER__INVAPP_BUN_BASELINE=0
+ARG TERMUX_DOCKER__INVAPP_WITH_AI=0
+RUN if [ -f "$TERMUX__PREFIX/tmp/invapp-seed/seed.sh" ]; then \
+        echo "[*] Seeding InVxTermux tooling..."; \
+        HOME="$TERMUX__HOME" \
+        PREFIX="$TERMUX__PREFIX" \
+        TMPDIR="$TERMUX__PREFIX/tmp" \
+        INVAPP_BUN_VERSION="$TERMUX_DOCKER__INVAPP_BUN_VERSION" \
+        INVAPP_BUN_BASELINE="$TERMUX_DOCKER__INVAPP_BUN_BASELINE" \
+        INVAPP_WITH_AI="$TERMUX_DOCKER__INVAPP_WITH_AI" \
+        "$TERMUX__PREFIX/bin/bash" "$TERMUX__PREFIX/tmp/invapp-seed/seed.sh"; \
+    else \
+        echo "[*] Stock termux-docker (no invapp seed tree)"; \
+    fi
+
+# Install updates and cleanup
+RUN rm -rf "${TERMUX__PREFIX}"/var/lib/apt/* \
         "${TERMUX__PREFIX}"/var/log/apt/* \
         "${TERMUX__CACHE_DIR}"/apt/* \
         "${TERMUX__PREFIX}"/var/cache/pacman/pkg/* \
@@ -57,6 +81,11 @@ FROM scratch
 
 ARG TERMUX__PREFIX
 ARG TERMUX__HOME
+
+LABEL org.opencontainers.image.title="InVxTermux (Termux for Docker/Podman)" \
+      org.opencontainers.image.source="https://github.com/involvex/termux-docker" \
+      org.opencontainers.image.documentation="https://involvex.github.io/termux-app/" \
+      org.opencontainers.image.licenses="GPL-3.0-or-later"
 
 ENV ANDROID_DATA=/data
 ENV ANDROID_ROOT=/system
