@@ -34,6 +34,18 @@ SHELL ["sh", "-c"]
 RUN chown root:root /data/ /data/data/
 RUN chmod 771 /data/ /data/data/
 
+# The Termux bootstrap rootfs has no /usr/bin (or /bin) — `env` ships at
+# $PREFIX/bin/env. Ecosystem CLIs (npm/PEP 508 bins) hardcode #!/usr/bin/env.
+# On Android, termux-exec rewrites that shebang via LD_PRELOAD; in a container
+# termux-exec skips itself (there is no /system/bin/getprop, so it can't read
+# android_build_version_sdk and bails without setting $LD_PRELOAD). Create the
+# interpreter path the kernel can resolve instead. Must run as root: the
+# non-root system user can't create /usr/bin. Idempotent.
+# (See docker/ README "bunx/npx exec caveat" in termux-app.)
+RUN mkdir -p /usr/bin /bin && \
+    ln -sf "$TERMUX__PREFIX/bin/env" /usr/bin/env && \
+    ln -sf "$TERMUX__PREFIX/bin/env" /bin/env
+
 # Install updates and cleanup
 USER 1000:1000
 RUN . $TERMUX__PREFIX/bin/termux-setup-package-manager && \
