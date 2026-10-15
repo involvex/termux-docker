@@ -59,8 +59,8 @@ jobs:
       with:
         repository: involvex/termux-app
          # The seed tree (app/src/main/assets/invapp/) lives in termux-app, not
-         # here. Track a branch via TERMUX_APP_REF until that PR merges, then
-         # switch the variable (or delete it) so CI tracks master.
+         # here, and is consolidated with the APK assets. CI clones termux-app
+         # (master by default; set TERMUX_APP_REF to pin/a branch for testing).
         ref: ${{ vars.TERMUX_APP_REF || 'master' }}
         path: termux-app-src
 
@@ -71,8 +71,8 @@ jobs:
         seed="termux-app-src/app/src/main/assets/invapp/seed.sh"
         if [ ! -f "$seed" ]; then
           echo "::error::involvex/termux-app@${{ vars.TERMUX_APP_REF || 'master' }} has no app/src/main/assets/invapp/seed.sh" >&2
-          echo "  merge the termux-app PR that adds app/src/main/assets/invapp/ first, or set the" >&2
-          echo "  TERMUX_APP_REF repository variable to a branch that contains it" >&2
+          echo "  ensure termux-app contains app/src/main/assets/invapp/seed.sh," >&2
+          echo "  or set TERMUX_APP_REF to a branch that does" >&2
           exit 1
         fi
         echo "seed tree: $(cd termux-app-src/app/src/main/assets/invapp && pwd) ($(find termux-app-src/app/src/main/assets/invapp -type f | wc -l) files)"
